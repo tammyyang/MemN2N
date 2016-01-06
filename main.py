@@ -10,11 +10,11 @@ import theano.tensor as T
 import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
+from simdat.core import ml
 from theano.printing import Print as pp
 
 import warnings
 warnings.filterwarnings('ignore', '.*topo.*')
-
 
 class InnerProductLayer(lasagne.layers.MergeLayer):
 
@@ -156,11 +156,16 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
 
 
 class Model:
-
-    def __init__(self, train_file, test_file, batch_size=32, embedding_size=20, max_norm=40, lr=0.01, num_hops=3, adj_weight_tying=True, linear_start=True, **kwargs):
-        train_lines, test_lines = self.get_lines(train_file), self.get_lines(test_file)
+    def __init__(self, train_file, test_file, batch_size=32,
+                 embedding_size=20, max_norm=40, lr=0.01,
+                 num_hops=3, adj_weight_tying=True,
+                 linear_start=True, **kwargs):
+        self.ml = ml.MLTools()
+        train_lines = self.get_lines(train_file)
+        test_lines = self.get_lines(test_file)
         lines = np.concatenate([train_lines, test_lines], axis=0)
-        vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = self.get_vocab(lines)
+        vocab, word_to_idx, idx_to_word, max_seqlen, \
+            max_sentlen = self.get_vocab(lines)
 
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, offset=0)
@@ -201,57 +206,122 @@ class Model:
         self.build_network(self.nonlinearity)
 
     def build_network(self, nonlinearity):
-        batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
+        batch_size = self.batch_size
+        max_seqlen, max_sentlen = self.max_seqlen, self.max_sentlen
+        embedding_size, vocab = self.embedding_size, self.vocab
 
         c = T.imatrix()
         q = T.ivector()
         y = T.imatrix()
         c_pe = T.tensor4()
         q_pe = T.tensor4()
-        self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
-        self.q_shared = theano.shared(np.zeros((batch_size, ), dtype=np.int32), borrow=True)
-        self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
-        self.c_pe_shared = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
-        self.q_pe_shared = theano.shared(np.zeros((batch_size, 1, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
+
+        _shape = (batch_size, max_seqlen)
+        self.c_shared = theano.shared(np.zeros(_shape, dtype=np.int32),
+                                      borrow=True)
+
+        _shape = (batch_size, )
+        self.q_shared = theano.shared(np.zeros(_shape, dtype=np.int32),
+                                      borrow=True)
+
+        _shape = (batch_size, self.num_classes)
+        self.a_shared = theano.shared(np.zeros(_shape, dtype=np.int32),
+                                      borrow=True)
+
+        _shape = (batch_size, max_seqlen, max_sentlen, embedding_size)
+        self.c_pe_shared = theano.shared(np.zeros(_shape,
+                                                  dtype=theano.config.floatX),
+                                         borrow=True)
+
+        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        self.q_pe_shared = theano.shared(np.zeros(_shape,
+                                                  dtype=theano.config.floatX),
+                                         borrow=True)
+
         S_shared = theano.shared(self.S, borrow=True)
 
-        cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
-        qq = S_shared[q.flatten()].reshape((batch_size, max_sentlen))
+        _shape = (batch_size, max_seqlen, max_sentlen)
+        cc = S_shared[c.flatten()].reshape(_shape)
 
-        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        l_question_in = lasagne.layers.InputLayer(shape=(batch_size, max_sentlen))
+        _shape = (batch_size, max_sentlen)
+        qq = S_shared[q.flatten()].reshape(_shape)
 
-        l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
-        l_question_pe_in = lasagne.layers.InputLayer(shape=(batch_size, 1, max_sentlen, embedding_size))
+        _shape = (batch_size, max_seqlen, max_sentlen)
+        l_context_in = lasagne.layers.InputLayer(shape=_shape)
 
-        A, C = lasagne.init.Normal(std=0.1).sample((len(vocab)+1, embedding_size)), lasagne.init.Normal(std=0.1)
-        A_T, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
-        W = A if self.adj_weight_tying else lasagne.init.Normal(std=0.1)
+        _shape = (batch_size, max_sentlen)
+        l_question_in = lasagne.layers.InputLayer(shape=_shape)
 
-        l_question_in = lasagne.layers.ReshapeLayer(l_question_in, shape=(batch_size * max_sentlen, ))
-        l_B_embedding = lasagne.layers.EmbeddingLayer(l_question_in, len(vocab)+1, embedding_size, W=W)
+        _shape = (batch_size, max_seqlen, max_sentlen, embedding_size)
+        l_context_pe_in = lasagne.layers.InputLayer(shape=_shape)
+
+        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        l_question_pe_in = lasagne.layers.InputLayer(shape=_shape)
+
+        std = {'std': 0.1}
+        A = lasagne.init.Normal(**std).sample((len(vocab)+1, embedding_size))
+        C = lasagne.init.Normal(**std)
+        A_T = lasagne.init.Normal(**std)
+        C_T = lasagne.init.Normal(**std)
+        W = A if self.adj_weight_tying else lasagne.init.Normal(**std)
+
+        _shape = (batch_size * max_sentlen, )
+        l_question_in = lasagne.layers.ReshapeLayer(l_question_in,
+                                                    shape=_shape)
+        l_B_embedding = lasagne.layers.EmbeddingLayer(l_question_in,
+                                                      len(vocab)+1,
+                                                      embedding_size, W=W)
         B = l_B_embedding.W
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 1, max_sentlen, embedding_size))
-        l_B_embedding = lasagne.layers.ElemwiseMergeLayer((l_B_embedding, l_question_pe_in), merge_function=T.mul)
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, max_sentlen, embedding_size))
+        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding,
+                                                    shape=_shape)
+        l_B_embedding = lasagne.layers.ElemwiseMergeLayer((l_B_embedding,
+                                                           l_question_pe_in),
+                                                          merge_function=T.mul)
+        _shape = (batch_size, max_sentlen, embedding_size)
+        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding,
+                                                    shape=_shape)
         l_B_embedding = SumLayer(l_B_embedding, axis=1)
 
-        self.mem_layers = [MemoryNetworkLayer((l_context_in, l_B_embedding, l_context_pe_in), vocab, embedding_size, A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity)]
+        self.mem_layers = [MemoryNetworkLayer((l_context_in, l_B_embedding,
+                                               l_context_pe_in),
+                                              vocab, embedding_size,
+                                              A=A, A_T=A_T, C=C, C_T=C_T,
+                                              nonlinearity=nonlinearity)]
         for _ in range(1, self.num_hops):
             if self.adj_weight_tying:
-                A, C = self.mem_layers[-1].C, lasagne.init.Normal(std=0.1)
-                A_T, C_T = self.mem_layers[-1].C_T, lasagne.init.Normal(std=0.1)
+                A = self.mem_layers[-1].C
+                C = lasagne.init.Normal(**std)
+                A_T = self.mem_layers[-1].C_T
+                C_T = lasagne.init.Normal(**std)
             else:  # RNN style
-                A, C = self.mem_layers[-1].A, self.mem_layers[-1].C
-                A_T, C_T = self.mem_layers[-1].A_T, self.mem_layers[-1].C_T
-            self.mem_layers += [MemoryNetworkLayer((l_context_in, self.mem_layers[-1], l_context_pe_in), vocab, embedding_size, A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity)]
+                A = self.mem_layers[-1].A
+                C = self.mem_layers[-1].C
+                A_T = self.mem_layers[-1].A_T
+                C_T = self.mem_layers[-1].C_T
+            self.mem_layers += [MemoryNetworkLayer((l_context_in,
+                                                    self.mem_layers[-1],
+                                                    l_context_pe_in),
+                                                   vocab, embedding_size,
+                                                   A=A, A_T=A_T, C=C, C_T=C_T,
+                                                   nonlinearity=nonlinearity)]
 
         if self.adj_weight_tying:
-            l_pred = TransposedDenseLayer(self.mem_layers[-1], self.num_classes, W=self.mem_layers[-1].C, b=None, nonlinearity=lasagne.nonlinearities.softmax)
+            l_pred = TransposedDenseLayer(self.mem_layers[-1],
+                                          self.num_classes,
+                                          W=self.mem_layers[-1].C,
+                                          b=None,
+                                          nonlinearity=lasagne.nonlinearities.softmax)
         else:
-            l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.Normal(std=0.1), b=None, nonlinearity=lasagne.nonlinearities.softmax)
+            l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1],
+                                               self.num_classes,
+                                               W=lasagne.init.Normal(**std),
+                                               b=None,
+                                               nonlinearity=lasagne.nonlinearities.softmax)
 
-        probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc, l_question_in: qq, l_context_pe_in: c_pe, l_question_pe_in: q_pe})
+        parms = {l_context_in: cc, l_question_in: qq,
+                 l_context_pe_in: c_pe, l_question_pe_in: q_pe}
+        probas = lasagne.layers.helper.get_output(l_pred, parms)
         probas = T.clip(probas, 1e-7, 1.0-1e-7)
 
         pred = T.argmax(probas, axis=1)
@@ -261,8 +331,10 @@ class Model:
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         print 'params:', params
         grads = T.grad(cost, params)
-        scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.sgd(scaled_grads, params, learning_rate=self.lr)
+        scaled_grads = lasagne.updates.total_norm_constraint(grads,
+                                                             self.max_norm)
+        updates = lasagne.updates.sgd(scaled_grads, params,
+                                      learning_rate=self.lr)
 
         givens = {
             c: self.c_shared,
@@ -272,12 +344,17 @@ class Model:
             q_pe: self.q_pe_shared
         }
 
-        self.train_model = theano.function([], cost, givens=givens, updates=updates)
-        self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
+        self.train_model = theano.function([], cost, givens=givens,
+                                           updates=updates)
+        self.compute_pred = theano.function([], pred, givens=givens,
+                                            on_unused_input='ignore')
 
         zero_vec_tensor = T.vector()
-        self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
-        self.set_zero = theano.function([zero_vec_tensor], updates=[(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [B]])
+        self.zero_vec = np.zeros(embedding_size,
+                                 dtype=theano.config.floatX)
+        updates = [(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [B]]
+        self.set_zero = theano.function([zero_vec_tensor],
+                                        updates=updates)
 
         self.nonlinearity = nonlinearity
         self.network = l_pred
@@ -293,7 +370,8 @@ class Model:
 
     def compute_f1(self, dataset):
         n_batches = len(dataset['Y']) // self.batch_size
-        y_pred = np.concatenate([self.predict(dataset, i) for i in xrange(n_batches)]).astype(np.int32) - 1
+        _y_pred = [self.predict(dataset, i) for i in xrange(n_batches)]
+        y_pred = np.concatenate(_y_pred).astype(np.int32) - 1
         y_true = [self.vocab.index(y) for y in dataset['Y'][:len(y_pred)]]
         print metrics.confusion_matrix(y_true, y_pred)
         print metrics.classification_report(y_true, y_pred)
@@ -301,7 +379,9 @@ class Model:
         for i, (t, p) in enumerate(zip(y_true, y_pred)):
             if t != p:
                 errors.append((i, self.lb.classes_[p]))
-        return metrics.f1_score(y_true, y_pred, average='weighted', pos_label=None), errors
+        met = metrics.f1_score(y_true, y_pred,
+                               average='weighted', pos_label=None)
+        return met, errors
 
     def train(self, n_epochs=100, shuffle_batch=False):
         epoch = 0
@@ -327,18 +407,19 @@ class Model:
                 self.reset_zero()
             end_time = time.time()
             print '\n' * 3, '*' * 80
-            print 'epoch:', epoch, 'cost:', (total_cost / len(indices)), ' took: %d(s)' % (end_time - start_time)
+            print 'epoch:', epoch
+            print ' cost:', (total_cost / len(indices))
+            print ' took: %d(s)' % (end_time - start_time)
 
             print 'TRAIN', '=' * 40
             train_f1, train_errors = self.compute_f1(self.data['train'])
             print 'TRAIN_ERROR:', (1-train_f1)*100
-            if False:
-                for i, pred in train_errors[:10]:
-                    print 'context: ', self.to_words(self.data['train']['C'][i])
-                    print 'question: ', self.to_words([self.data['train']['Q'][i]])
-                    print 'correct answer: ', self.data['train']['Y'][i]
-                    print 'predicted answer: ', pred
-                    print '---' * 20
+            for i, pred in train_errors[:10]:
+                print 'context: ', self.to_words(self.data['train']['C'][i])
+                print 'question: ', self.to_words([self.data['train']['Q'][i]])
+                print 'correct answer: ', self.data['train']['Y'][i]
+                print 'predicted answer: ', pred
+                print '---' * 20
 
             if prev_train_f1 is not None and train_f1 < prev_train_f1 and self.nonlinearity is None:
                 prev_weights = lasagne.layers.helper.get_all_param_values(self.network)
@@ -350,6 +431,8 @@ class Model:
                 print '*** TEST_ERROR:', (1-test_f1)*100
 
             prev_train_f1 = train_f1
+        mparms = lasagne.layers.helper.get_all_param_values(self.network)
+        self.ml.save_model('rnn', mparms, high=True)
 
     def to_words(self, indices):
         sents = []
@@ -364,11 +447,21 @@ class Model:
             dataset[k] = dataset[k][p]
 
     def set_shared_variables(self, dataset, index):
-        c = np.zeros((self.batch_size, self.max_seqlen), dtype=np.int32)
-        q = np.zeros((self.batch_size, ), dtype=np.int32)
-        y = np.zeros((self.batch_size, self.num_classes), dtype=np.int32)
-        c_pe = np.zeros((self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
-        q_pe = np.zeros((self.batch_size, 1, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
+        _shape = (self.batch_size, self.max_seqlen)
+        c = np.zeros(_shape, dtype=np.int32)
+
+        _shape = (self.batch_size, )
+        q = np.zeros(_shape, dtype=np.int32)
+
+        _shape = (self.batch_size, self.num_classes)
+        y = np.zeros(_shape, dtype=np.int32)
+
+        _shape = (self.batch_size, self.max_seqlen,
+                  self.max_sentlen, self.embedding_size)
+        c_pe = np.zeros(_shape, dtype=theano.config.floatX)
+
+        _shape = (self.batch_size, 1, self.max_sentlen, self.embedding_size)
+        q_pe = np.zeros(_shape, dtype=theano.config.floatX)
 
         indices = range(index*self.batch_size, (index+1)*self.batch_size)
         for i, row in enumerate(dataset['C'][indices]):
@@ -458,6 +551,39 @@ def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1')
 
 
+class Pred:
+    def __init__(self):
+        self.ml = ml.MLTools()
+        self.network = None
+
+    def get_lines(self, fname):
+        lines = []
+        with open(fname, 'r') as f:
+            ori_lines = f.readlines()
+            for line in ori_lines:
+                line = line.strip()
+                first_break = line.find(' ')
+                _line = line[first_break+1:]
+                if _line.find('?') == -1:
+                    lines.append({'type': 's', 'text': _line})
+                else:
+                    sid = int(line[0:first_break])
+                    qbreak = _line.find('?')
+                    ans = _line[qbreak+1:].replace(' ', '')
+                    tmp = [w for w in ans.split('\t') if len(w) > 0]
+                    lines.append({'id': sid, 'type': 'q',
+                                  'text': _line[:qbreak+1],
+                                  'answer': tmp[0],
+                                  'refs': [int(tmp[1])-1]})
+                if False and i > 1000:
+                    break
+        return np.array(lines)
+
+    def pred(self, data, network, fmodel='rnn.pkl'):
+        prev_weights = self.ml.read_model(fmodel)
+        lasagne.layers.helper.set_all_param_values(network, prev_weights)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.register('type', 'bool', str2bool)
@@ -483,7 +609,10 @@ def main():
         args.test_file = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
 
     model = Model(**args.__dict__)
-    model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
+    pred = Pred()
+    data = pred.get_lines('tmp.txt')
+    pred.pred(data, model.network)
+    # model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 
 if __name__ == '__main__':
     main()

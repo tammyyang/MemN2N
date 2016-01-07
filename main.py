@@ -201,9 +201,10 @@ class Model:
         self.max_norm = max_norm
         self.S = S
         self.idx_to_word = idx_to_word
-        self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
+#TAMMY
+#        self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax 
 
-        self.build_network(self.nonlinearity)
+#        self.build_network(self.nonlinearity)
 
     def build_network(self, nonlinearity):
         batch_size = self.batch_size
@@ -514,6 +515,25 @@ class Model:
 
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
+    def process_dataset2(self, lines, word_to_idx, max_sentlen, offset):
+        S, C, Q, Y = [], [], [], []
+
+        for i, line in enumerate(lines):
+            word_indices = [word_to_idx[w] for w in nltk.word_tokenize(line['text'])]
+            word_indices += [0] * (max_sentlen - len(word_indices))
+            S.append(word_indices)
+            if line['type'] == 'q':
+                id = line['id']-1
+                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
+                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
+                C.append(indices)
+                Q.append(offset+i+1)
+                Y.append(line['answer'])
+        print 'C=', C
+        print 'Q=', Q
+        print 'Y=', Y
+        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
+
     def process_dataset(self, lines, word_to_idx, max_sentlen, offset):
         S, C, Q, Y = [], [], [], []
 
@@ -610,8 +630,17 @@ def main():
 
     model = Model(**args.__dict__)
     pred = Pred()
-    data = pred.get_lines('tmp.txt')
-    pred.pred(data, model.network)
+    from data import read_data_qa
+    count = []
+    word2idx = {}
+    max_seqlen = 0
+    data = read_data_qa('tmp.txt', count, word2idx, max_seqlen)
+    print 'new', max_seqlen
+    lines = pred.get_lines('tmp.txt')
+    vocab, word_to_idx, idx_to_word, max_seqlen, \
+        max_sentlen = model.get_vocab(lines)
+    print 'old', max_seqlen
+    # pred.pred(data, model.network)
     # model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 
 if __name__ == '__main__':

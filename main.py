@@ -11,6 +11,8 @@ import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from simdat.core import ml
+from data import read_data_qa
+from data import process_dataset
 from theano.printing import Print as pp
 
 import warnings
@@ -103,16 +105,16 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         if len(incomings) != 3:
             raise NotImplementedError
 
-        batch_size, max_seqlen, max_sentlen = self.input_shapes[0]
+        batch_size, maxseq, maxsent = self.input_shapes[0]
 
-        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
+        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, maxseq, maxsent))
         l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, embedding_size))
-        l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
+        l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, maxseq, maxsent, embedding_size))
 
-        l_context_in = lasagne.layers.ReshapeLayer(l_context_in, shape=(batch_size * max_seqlen * max_sentlen, ))
+        l_context_in = lasagne.layers.ReshapeLayer(l_context_in, shape=(batch_size * maxseq * maxsent, ))
         l_A_embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab)+1, embedding_size, W=A)
         self.A = l_A_embedding.W
-        l_A_embedding = lasagne.layers.ReshapeLayer(l_A_embedding, shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
+        l_A_embedding = lasagne.layers.ReshapeLayer(l_A_embedding, shape=(batch_size, maxseq, maxsent, embedding_size))
         l_A_embedding = lasagne.layers.ElemwiseMergeLayer((l_A_embedding, l_context_pe_in), merge_function=T.mul)
         l_A_embedding = SumLayer(l_A_embedding, axis=2)
         l_A_embedding = TemporalEncodingLayer(l_A_embedding, T=A_T)
@@ -120,7 +122,7 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
 
         l_C_embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab)+1, embedding_size, W=C)
         self.C = l_C_embedding.W
-        l_C_embedding = lasagne.layers.ReshapeLayer(l_C_embedding, shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
+        l_C_embedding = lasagne.layers.ReshapeLayer(l_C_embedding, shape=(batch_size, maxseq, maxsent, embedding_size))
         l_C_embedding = lasagne.layers.ElemwiseMergeLayer((l_C_embedding, l_context_pe_in), merge_function=T.mul)
         l_C_embedding = SumLayer(l_C_embedding, axis=2)
         l_C_embedding = TemporalEncodingLayer(l_C_embedding, T=C_T)
@@ -155,26 +157,45 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         self.set_zero(self.zero_vec)
 
 
+class RNNArgs(ml.Args):
+    def _add_args(self):
+        """Called by __init__ of Args class"""
+        self.trainf = 'data/en/qa1_single-supporting-fact_train.txt'
+        self.testf = 'data/en/qa1_single-supporting-fact_train.txt'
+        self.batch_size = 32
+        self.embedding_size = 20
+        self.max_norm = 40
+        self.lr = 0.01
+        self.linear_start = True
+
+
 class Model:
-    def __init__(self, train_file, test_file, batch_size=32,
+    def __init__(self, trainf, testf, batch_size=32,
                  embedding_size=20, max_norm=40, lr=0.01,
                  num_hops=3, adj_weight_tying=True,
                  linear_start=True, **kwargs):
         self.ml = ml.MLTools()
-        train_lines = self.get_lines(train_file)
-        test_lines = self.get_lines(test_file)
+        self.args = RNNArgs(pfs=['rnn.json'])
+        self.count = []
+        self.word2idx = {}
+        self.idx2word = {}
+
+        # maxseq, maxsent = self.train_init() #TAMMY
+
+        train_lines = self.get_lines(trainf)
+        test_lines = self.get_lines(testf)
         lines = np.concatenate([train_lines, test_lines], axis=0)
-        vocab, word_to_idx, idx_to_word, max_seqlen, \
-            max_sentlen = self.get_vocab(lines)
+        vocab, word2idx, idx2word, maxseq, \
+            maxsent = self.get_vocab(lines)
 
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, offset=0)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, offset=len(S_train))
-        S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word2idx, maxsent, offset=0)
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word2idx, maxsent, offset=len(S_train))
+        S = np.concatenate([np.zeros((1, maxsent), dtype=np.int32), S_train, S_test], axis=0)
         for i in range(10):
             for k in ['C', 'Q', 'Y']:
                 print k, self.data['test'][k][i]
-        print 'batch_size:', batch_size, 'max_seqlen:', max_seqlen, 'max_sentlen:', max_sentlen
+        print 'batch_size:', batch_size, 'maxseq:', maxseq, 'maxsent:', maxsent
         print 'sentences:', S.shape
         print 'vocab:', len(vocab), vocab
         for d in ['train', 'test']:
@@ -188,8 +209,8 @@ class Model:
         vocab = lb.classes_.tolist()
 
         self.batch_size = batch_size
-        self.max_seqlen = max_seqlen
-        self.max_sentlen = max_sentlen
+        self.maxseq = maxseq
+        self.maxsent = maxsent
         self.embedding_size = embedding_size
         self.num_classes = len(vocab) + 1
         self.vocab = vocab
@@ -200,15 +221,53 @@ class Model:
         self.lr = self.init_lr
         self.max_norm = max_norm
         self.S = S
-        self.idx_to_word = idx_to_word
-#TAMMY
+        self.idx2word = idx2word
+# TAMMY
 #        self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax 
 
 #        self.build_network(self.nonlinearity)
 
+    def train_init(self):
+        maxseq = 0
+        maxsent = 0
+
+        dtrain, maxseq, maxsent = read_data_qa(self.args.trainf, self.count,
+                                               self.word2idx, maxseq, maxsent)
+        dtest, maxseq, maxsent = read_data_qa(self.args.testf, self.count,
+                                              self.word2idx, maxseq, maxsent)
+        vocab = self.word2idx.keys()
+        self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
+
+        '''
+        S, C, Q, Y = [], [], [], []
+
+        for i, line in enumerate(lines):
+            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
+            word_indices += [0] * (maxsent - len(word_indices))
+            S.append(word_indices)
+            if line['type'] == 'q':
+                id = line['id']-1
+                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
+                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
+                C.append(indices)
+                Q.append(offset+i+1)
+                Y.append(line['answer'])
+        print 'C=', C
+        print 'Q=', Q
+        print 'Y=', Y
+        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
+
+        self.data = {'train': {}, 'test': {}}
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word2idx, maxsent, offset=0)
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word2idx, maxsent, offset=len(S_train))
+        S = np.concatenate([np.zeros((1, maxsent), dtype=np.int32), S_train, S_test], axis=0)
+
+        '''
+        return maxseq, maxsent
+
     def build_network(self, nonlinearity):
         batch_size = self.batch_size
-        max_seqlen, max_sentlen = self.max_seqlen, self.max_sentlen
+        maxseq, maxsent = self.maxseq, self.maxsent
         embedding_size, vocab = self.embedding_size, self.vocab
 
         c = T.imatrix()
@@ -217,7 +276,7 @@ class Model:
         c_pe = T.tensor4()
         q_pe = T.tensor4()
 
-        _shape = (batch_size, max_seqlen)
+        _shape = (batch_size, maxseq)
         self.c_shared = theano.shared(np.zeros(_shape, dtype=np.int32),
                                       borrow=True)
 
@@ -229,34 +288,34 @@ class Model:
         self.a_shared = theano.shared(np.zeros(_shape, dtype=np.int32),
                                       borrow=True)
 
-        _shape = (batch_size, max_seqlen, max_sentlen, embedding_size)
+        _shape = (batch_size, maxseq, maxsent, embedding_size)
         self.c_pe_shared = theano.shared(np.zeros(_shape,
                                                   dtype=theano.config.floatX),
                                          borrow=True)
 
-        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        _shape = (batch_size, 1, maxsent, embedding_size)
         self.q_pe_shared = theano.shared(np.zeros(_shape,
                                                   dtype=theano.config.floatX),
                                          borrow=True)
 
         S_shared = theano.shared(self.S, borrow=True)
 
-        _shape = (batch_size, max_seqlen, max_sentlen)
+        _shape = (batch_size, maxseq, maxsent)
         cc = S_shared[c.flatten()].reshape(_shape)
 
-        _shape = (batch_size, max_sentlen)
+        _shape = (batch_size, maxsent)
         qq = S_shared[q.flatten()].reshape(_shape)
 
-        _shape = (batch_size, max_seqlen, max_sentlen)
+        _shape = (batch_size, maxseq, maxsent)
         l_context_in = lasagne.layers.InputLayer(shape=_shape)
 
-        _shape = (batch_size, max_sentlen)
+        _shape = (batch_size, maxsent)
         l_question_in = lasagne.layers.InputLayer(shape=_shape)
 
-        _shape = (batch_size, max_seqlen, max_sentlen, embedding_size)
+        _shape = (batch_size, maxseq, maxsent, embedding_size)
         l_context_pe_in = lasagne.layers.InputLayer(shape=_shape)
 
-        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        _shape = (batch_size, 1, maxsent, embedding_size)
         l_question_pe_in = lasagne.layers.InputLayer(shape=_shape)
 
         std = {'std': 0.1}
@@ -266,20 +325,20 @@ class Model:
         C_T = lasagne.init.Normal(**std)
         W = A if self.adj_weight_tying else lasagne.init.Normal(**std)
 
-        _shape = (batch_size * max_sentlen, )
+        _shape = (batch_size * maxsent, )
         l_question_in = lasagne.layers.ReshapeLayer(l_question_in,
                                                     shape=_shape)
         l_B_embedding = lasagne.layers.EmbeddingLayer(l_question_in,
                                                       len(vocab)+1,
                                                       embedding_size, W=W)
         B = l_B_embedding.W
-        _shape = (batch_size, 1, max_sentlen, embedding_size)
+        _shape = (batch_size, 1, maxsent, embedding_size)
         l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding,
                                                     shape=_shape)
         l_B_embedding = lasagne.layers.ElemwiseMergeLayer((l_B_embedding,
                                                            l_question_pe_in),
                                                           merge_function=T.mul)
-        _shape = (batch_size, max_sentlen, embedding_size)
+        _shape = (batch_size, maxsent, embedding_size)
         l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding,
                                                     shape=_shape)
         l_B_embedding = SumLayer(l_B_embedding, axis=1)
@@ -438,7 +497,7 @@ class Model:
     def to_words(self, indices):
         sents = []
         for idx in indices:
-            words = ' '.join([self.idx_to_word[idx] for idx in self.S[idx] if idx > 0])
+            words = ' '.join([self.idx2word[idx] for idx in self.S[idx] if idx > 0])
             sents.append(words)
         return ' '.join(sents)
 
@@ -448,7 +507,7 @@ class Model:
             dataset[k] = dataset[k][p]
 
     def set_shared_variables(self, dataset, index):
-        _shape = (self.batch_size, self.max_seqlen)
+        _shape = (self.batch_size, self.maxseq)
         c = np.zeros(_shape, dtype=np.int32)
 
         _shape = (self.batch_size, )
@@ -457,23 +516,23 @@ class Model:
         _shape = (self.batch_size, self.num_classes)
         y = np.zeros(_shape, dtype=np.int32)
 
-        _shape = (self.batch_size, self.max_seqlen,
-                  self.max_sentlen, self.embedding_size)
+        _shape = (self.batch_size, self.maxseq,
+                  self.maxsent, self.embedding_size)
         c_pe = np.zeros(_shape, dtype=theano.config.floatX)
 
-        _shape = (self.batch_size, 1, self.max_sentlen, self.embedding_size)
+        _shape = (self.batch_size, 1, self.maxsent, self.embedding_size)
         q_pe = np.zeros(_shape, dtype=theano.config.floatX)
 
         indices = range(index*self.batch_size, (index+1)*self.batch_size)
         for i, row in enumerate(dataset['C'][indices]):
-            row = row[:self.max_seqlen]
+            row = row[:self.maxseq]
             c[i, :len(row)] = row
 
         q[:len(indices)] = dataset['Q'][indices]
 
         for key, mask in [('C', c_pe), ('Q', q_pe)]:
             for i, row in enumerate(dataset[key][indices]):
-                sentences = self.S[row].reshape((-1, self.max_sentlen))
+                sentences = self.S[row].reshape((-1, self.maxsent))
                 for ii, word_idxs in enumerate(sentences):
                     J = np.count_nonzero(word_idxs)
                     for j in np.arange(J):
@@ -489,38 +548,38 @@ class Model:
 
     def get_vocab(self, lines):
         vocab = set()
-        max_sentlen = 0
+        maxsent = 0
         for i, line in enumerate(lines):
             words = nltk.word_tokenize(line['text'])
-            max_sentlen = max(max_sentlen, len(words))
+            maxsent = max(maxsent, len(words))
             for w in words:
                 vocab.add(w)
             if line['type'] == 'q':
                 vocab.add(line['answer'])
 
-        word_to_idx = {}
+        word2idx = {}
         for w in vocab:
-            word_to_idx[w] = len(word_to_idx) + 1
+            word2idx[w] = len(word2idx) + 1
 
-        idx_to_word = {}
-        for w, idx in word_to_idx.iteritems():
-            idx_to_word[idx] = w
+        idx2word = {}
+        for w, idx in word2idx.iteritems():
+            idx2word[idx] = w
 
-        max_seqlen = 0
+        maxseq = 0
         for i, line in enumerate(lines):
             if line['type'] == 'q':
                 id = line['id']-1
                 indices = [idx for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                max_seqlen = max(len(indices), max_seqlen)
+                maxseq = max(len(indices), maxseq)
 
-        return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
+        return vocab, word2idx, idx2word, maxseq, maxsent
 
-    def process_dataset2(self, lines, word_to_idx, max_sentlen, offset):
+    def process_dataset2(self, lines, word2idx, maxsent, offset):
         S, C, Q, Y = [], [], [], []
 
         for i, line in enumerate(lines):
-            word_indices = [word_to_idx[w] for w in nltk.word_tokenize(line['text'])]
-            word_indices += [0] * (max_sentlen - len(word_indices))
+            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
+            word_indices += [0] * (maxsent - len(word_indices))
             S.append(word_indices)
             if line['type'] == 'q':
                 id = line['id']-1
@@ -529,17 +588,24 @@ class Model:
                 C.append(indices)
                 Q.append(offset+i+1)
                 Y.append(line['answer'])
+        idx2word = dict(zip(word2idx.values(), word2idx.keys()))
+        # for s in S:
+        #    print(s)
+        #    print(idx2word)
+        #    print([idx2word[w] for w in s if w != 0])
+        # print(word2idx)
+
         print 'C=', C
         print 'Q=', Q
         print 'Y=', Y
         return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, offset):
+    def process_dataset(self, lines, word2idx, maxsent, offset):
         S, C, Q, Y = [], [], [], []
 
         for i, line in enumerate(lines):
-            word_indices = [word_to_idx[w] for w in nltk.word_tokenize(line['text'])]
-            word_indices += [0] * (max_sentlen - len(word_indices))
+            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
+            word_indices += [0] * (maxsent - len(word_indices))
             S.append(word_indices)
             if line['type'] == 'q':
                 id = line['id']-1
@@ -608,8 +674,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.register('type', 'bool', str2bool)
     parser.add_argument('--task', type=int, default=1, help='Task#')
-    parser.add_argument('--train_file', type=str, default='', help='Train file')
-    parser.add_argument('--test_file', type=str, default='', help='Test file')
+    parser.add_argument('--trainf', type=str, default='', help='Train file')
+    parser.add_argument('--testf', type=str, default='', help='Test file')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--embedding_size', type=int, default=20, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
@@ -624,22 +690,28 @@ def main():
     print 'args:', args
     print '*' * 80
 
-    if args.train_file == '' or args.test_file == '':
-        args.train_file = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
-        args.test_file = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
+    if args.trainf == '' or args.testf == '':
+        args.trainf = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
+        args.testf = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
 
     model = Model(**args.__dict__)
     pred = Pred()
-    from data import read_data_qa
+
     count = []
     word2idx = {}
-    max_seqlen = 0
-    data = read_data_qa('tmp.txt', count, word2idx, max_seqlen)
-    print 'new', max_seqlen
+    maxseq = 0
+    maxsent = 0
+    pdata, maxseq, maxsent = read_data_qa('tmp.txt', count, word2idx,
+                                          maxseq, maxsent)
+    # print(pdata)
+    vocab = word2idx.keys()
+    idx2word = dict(zip(word2idx.values(), word2idx.keys()))
+    process_dataset(pdata, word2idx, maxsent)
+
     lines = pred.get_lines('tmp.txt')
-    vocab, word_to_idx, idx_to_word, max_seqlen, \
-        max_sentlen = model.get_vocab(lines)
-    print 'old', max_seqlen
+    vocab, word2idx, idx2word, maxseq, \
+    maxsent = model.get_vocab(lines)
+    model.process_dataset2(lines, word2idx, maxsent, 0)
     # pred.pred(data, model.network)
     # model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 

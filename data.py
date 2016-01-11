@@ -9,7 +9,6 @@ def get_statement(line):
     line = line.replace('\n', '')
     bk = line.find(' ')
     lid = int(line[:bk+1]) - 1
-    # lid = int(line[:bk+1])
     segs = line.split('?')
     try:
         ans = segs[1].split('\t')
@@ -18,9 +17,8 @@ def get_statement(line):
     except IndexError:
         return segs[0][bk+1:], None, lid
 
-def process_dataset(data, word2idx, maxsent):
+def process_dataset(data, word2idx, maxsent, offset=0):
     S, Y, C, Q = [], [], [], []
-    # S, Y, C, Q = [[0]*maxsent], [], [], []
     for stat in data[-1]:
         indices = map(lambda x: word2idx[x], stat)
         indices += [0] * (maxsent - len(stat))
@@ -28,10 +26,10 @@ def process_dataset(data, word2idx, maxsent):
     for i in data.keys():
         if i < 0:
             continue
-        C.append(data[i][3])
-        Q.append(i)
+        C.append([idx + offset for idx in data[i][3]])
+        Q.append(i + offset)
         Y.append(data[i][1][1])
-    return {'S': np.array(S, dtype=np.int32),
+    return {'S': S,
             'Y': np.array(Y), 'C': np.array(C),
             'Q': np.array(Q, dtype=np.int32)}
 
@@ -56,19 +54,16 @@ def read_data_qa(fname, count, word2idx,
         _stats = nltk.word_tokenize(stat)
         max_sentlen = max(len(_stats), max_sentlen)
         words.extend(_stats)
-        # if lid == 1:
         if lid == 0:
             max_seqlen = max(counter, max_seqlen)
-            counter == 0
+            counter = 0
             start_idx = i
             stats_idx = []
         all_stats.append(_stats)
         if ans is None:
             counter += 1
             stats_idx.append(i)
-            # stats_idx.append(i + 1)
         else:
-            # data[i + 1] = [deepcopy(stat), ans,
             data[i] = [deepcopy(stat), ans,
                        list(reversed(all_stats[start_idx:i])),
                        list(reversed(stats_idx))]
@@ -83,7 +78,5 @@ def read_data_qa(fname, count, word2idx,
         if not word2idx.has_key(word):
             word2idx[word] = len(word2idx)
 
-    # print(count)
-    # print(word2idx)
     data[-1] = all_stats
     return data, max_seqlen, max_sentlen

@@ -161,7 +161,7 @@ class RNNArgs(ml.Args):
     def _add_args(self):
         """Called by __init__ of Args class"""
         self.trainf = 'data/en/qa1_single-supporting-fact_train.txt'
-        self.testf = 'data/en/qa1_single-supporting-fact_train.txt'
+        self.validf = 'data/en/qa1_single-supporting-fact_test.txt'
         self.batch_size = 32
         self.embedding_size = 20
         self.max_norm = 40
@@ -170,40 +170,38 @@ class RNNArgs(ml.Args):
 
 
 class Model:
-    def __init__(self, trainf, testf, batch_size=32,
+    def __init__(self, trainf, validf, batch_size=32,
                  embedding_size=20, max_norm=40, lr=0.01,
                  num_hops=3, adj_weight_tying=True,
                  linear_start=True, **kwargs):
         self.ml = ml.MLTools()
         self.args = RNNArgs(pfs=['rnn.json'])
         self.count = []
+        self.S = []
         self.word2idx = {}
         self.idx2word = {}
-        self.data = {'train': {}, 'test': {}}
+        self.data = {'train': {}, 'valid': {}}
 
         maxseq, maxsent, ptrain = self.init_data(self.args.trainf)
-        S_train = ptrain['S']
         self.data['train']['C'] = ptrain['C']
         self.data['train']['Q'] = ptrain['Q']
         self.data['train']['Y'] = ptrain['Y']
 
-        maxseq, maxsent, ptest = self.init_data(self.args.testf)
-        S_test = ptest['S']
-        self.data['test']['C'] = ptest['C']
-        self.data['test']['Q'] = ptest['Q']
-        self.data['test']['Y'] = ptest['Y']
+        maxseq, maxsent, pvalid = self.init_data(self.args.validf,
+                                                maxseq=maxseq,
+                                                maxsent=maxsent)
+        self.data['valid']['C'] = pvalid['C']
+        self.data['valid']['Q'] = pvalid['Q']
+        self.data['valid']['Y'] = pvalid['Y']
+        self.S = np.array(self.S, dtype=np.int32)
 
         self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
         vocab = self.word2idx.keys()
 
-        S = np.concatenate([np.zeros((1, maxsent), dtype=np.int32), S_train, S_test], axis=0)
-        for i in range(10):
-            for k in ['C', 'Q', 'Y']:
-                print k, self.data['test'][k][i]
         print 'batch_size:', batch_size, 'maxseq:', maxseq, 'maxsent:', maxsent
-        print 'sentences:', S.shape
+        print 'sentences:', self.S.shape
         print 'vocab:', len(vocab), vocab
-        for d in ['train', 'test']:
+        for d in ['train', 'valid']:
             print d,
             for k in ['C', 'Q', 'Y']:
                 print k, self.data[d][k].shape,
@@ -225,17 +223,18 @@ class Model:
         self.init_lr = lr
         self.lr = self.init_lr
         self.max_norm = max_norm
-        self.S = S
         #TAMMY
-        # self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
+        self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
-        # self.build_network(self.nonlinearity)
+        self.build_network(self.nonlinearity)
 
     def init_data(self, fdata, maxseq=0, maxsent=0):
 
         data, maxseq, maxsent = read_data_qa(fdata, self.count,
                                              self.word2idx, maxseq, maxsent)
-        processed = process_dataset(data, self.word2idx, maxsent)
+        processed = process_dataset(data, self.word2idx, maxsent,
+                                    offset=len(self.S))
+        self.S.extend(processed['S'])
         return maxseq, maxsent, processed
 
     def build_network(self, nonlinearity):
@@ -460,8 +459,8 @@ class Model:
                 lasagne.layers.helper.set_all_param_values(self.network, prev_weights)
             else:
                 print 'TEST', '=' * 40
-                test_f1, test_errors = self.compute_f1(self.data['test'])
-                print '*** TEST_ERROR:', (1-test_f1)*100
+                valid_f1, valid_errors = self.compute_f1(self.data['valid'])
+                print '*** TEST_ERROR:', (1-valid_f1)*100
 
             prev_train_f1 = train_f1
         mparms = lasagne.layers.helper.get_all_param_values(self.network)
@@ -519,84 +518,6 @@ class Model:
         self.c_pe_shared.set_value(c_pe)
         self.q_pe_shared.set_value(q_pe)
 
-    def get_vocab(self, lines):
-        vocab = set()
-        maxsent = 0
-        for i, line in enumerate(lines):
-            words = nltk.word_tokenize(line['text'])
-            maxsent = max(maxsent, len(words))
-            for w in words:
-                vocab.add(w)
-            if line['type'] == 'q':
-                vocab.add(line['answer'])
-
-        word2idx = {}
-        for w in vocab:
-            word2idx[w] = len(word2idx) + 1
-
-        idx2word = {}
-        for w, idx in word2idx.iteritems():
-            idx2word[idx] = w
-
-        maxseq = 0
-        for i, line in enumerate(lines):
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [idx for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                maxseq = max(len(indices), maxseq)
-
-        return vocab, word2idx, idx2word, maxseq, maxsent
-
-    def process_dataset2(self, lines, word2idx, maxsent, offset):
-        S, C, Q, Y = [], [], [], []
-
-        for i, line in enumerate(lines):
-            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
-            word_indices += [0] * (maxsent - len(word_indices))
-            S.append(word_indices)
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
-                C.append(indices)
-                Q.append(offset+i+1)
-                Y.append(line['answer'])
-        idx2word = dict(zip(word2idx.values(), word2idx.keys()))
-
-        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
-
-    def process_dataset(self, lines, word2idx, maxsent, offset):
-        S, C, Q, Y = [], [], [], []
-
-        for i, line in enumerate(lines):
-            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
-            word_indices += [0] * (maxsent - len(word_indices))
-            S.append(word_indices)
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
-                C.append(indices)
-                Q.append(offset+i+1)
-                Y.append(line['answer'])
-        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
-
-    def get_lines(self, fname):
-        lines = []
-        for i, line in enumerate(open(fname)):
-            id = int(line[0:line.find(' ')])
-            line = line.strip()
-            line = line[line.find(' ')+1:]
-            if line.find('?') == -1:
-                lines.append({'type': 's', 'text': line})
-            else:
-                idx = line.find('?')
-                tmp = line[idx+1:].split('\t')
-                lines.append({'id': id, 'type': 'q', 'text': line[:idx], 'answer': tmp[1].strip(), 'refs': [int(x)-1 for x in tmp[2:][0].split(' ')]})
-            if False and i > 1000:
-                break
-        return np.array(lines)
-
 
 def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1')
@@ -606,29 +527,6 @@ class Pred:
     def __init__(self):
         self.ml = ml.MLTools()
         self.network = None
-
-    def get_lines(self, fname):
-        lines = []
-        with open(fname, 'r') as f:
-            ori_lines = f.readlines()
-            for line in ori_lines:
-                line = line.strip()
-                first_break = line.find(' ')
-                _line = line[first_break+1:]
-                if _line.find('?') == -1:
-                    lines.append({'type': 's', 'text': _line})
-                else:
-                    sid = int(line[0:first_break])
-                    qbreak = _line.find('?')
-                    ans = _line[qbreak+1:].replace(' ', '')
-                    tmp = [w for w in ans.split('\t') if len(w) > 0]
-                    lines.append({'id': sid, 'type': 'q',
-                                  'text': _line[:qbreak+1],
-                                  'answer': tmp[0],
-                                  'refs': [int(tmp[1])-1]})
-                if False and i > 1000:
-                    break
-        return np.array(lines)
 
     def pred(self, data, network, fmodel='rnn.pkl'):
         prev_weights = self.ml.read_model(fmodel)
@@ -647,7 +545,7 @@ def main():
     parser.register('type', 'bool', str2bool)
     parser.add_argument('--task', type=int, default=1, help='Task#')
     parser.add_argument('--trainf', type=str, default='', help='Train file')
-    parser.add_argument('--testf', type=str, default='', help='Test file')
+    parser.add_argument('--validf', type=str, default='', help='Test file')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--embedding_size', type=int, default=20, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
@@ -662,13 +560,13 @@ def main():
     print 'args:', args
     print '*' * 80
 
-    if args.trainf == '' or args.testf == '':
+    if args.trainf == '' or args.validf == '':
         args.trainf = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
-        args.testf = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
+        args.validf = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
 
     model = Model(**args.__dict__)
     pred = Pred()
-
+    '''
     count = []
     word2idx = {}
     maxseq = 0
@@ -683,12 +581,9 @@ def main():
         print to_words(idx2word, data['S'], data['C'][i])
         print to_words(idx2word, data['S'], [data['Q'][i]])
         print data['Y'][i]
-    lines = pred.get_lines('tmp.txt')
-    vocab, word2idx, idx2word, maxseq, \
-    maxsent = model.get_vocab(lines)
-    model.process_dataset2(lines, word2idx, maxsent, 0)
+    '''
     # pred.pred(data, model.network)
-    # model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
+    model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 
 if __name__ == '__main__':
     main()

@@ -179,18 +179,23 @@ class Model:
         self.count = []
         self.word2idx = {}
         self.idx2word = {}
-
-        # maxseq, maxsent = self.train_init() #TAMMY
-
-        train_lines = self.get_lines(trainf)
-        test_lines = self.get_lines(testf)
-        lines = np.concatenate([train_lines, test_lines], axis=0)
-        vocab, word2idx, idx2word, maxseq, \
-            maxsent = self.get_vocab(lines)
-
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word2idx, maxsent, offset=0)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word2idx, maxsent, offset=len(S_train))
+
+        maxseq, maxsent, ptrain = self.init_data(self.args.trainf)
+        S_train = ptrain['S']
+        self.data['train']['C'] = ptrain['C']
+        self.data['train']['Q'] = ptrain['Q']
+        self.data['train']['Y'] = ptrain['Y']
+
+        maxseq, maxsent, ptest = self.init_data(self.args.testf)
+        S_test = ptest['S']
+        self.data['test']['C'] = ptest['C']
+        self.data['test']['Q'] = ptest['Q']
+        self.data['test']['Y'] = ptest['Y']
+
+        self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
+        vocab = self.word2idx.keys()
+
         S = np.concatenate([np.zeros((1, maxsent), dtype=np.int32), S_train, S_test], axis=0)
         for i in range(10):
             for k in ['C', 'Q', 'Y']:
@@ -221,49 +226,17 @@ class Model:
         self.lr = self.init_lr
         self.max_norm = max_norm
         self.S = S
-        self.idx2word = idx2word
-# TAMMY
-#        self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax 
+        #TAMMY
+        # self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
-#        self.build_network(self.nonlinearity)
+        # self.build_network(self.nonlinearity)
 
-    def train_init(self):
-        maxseq = 0
-        maxsent = 0
+    def init_data(self, fdata, maxseq=0, maxsent=0):
 
-        dtrain, maxseq, maxsent = read_data_qa(self.args.trainf, self.count,
-                                               self.word2idx, maxseq, maxsent)
-        dtest, maxseq, maxsent = read_data_qa(self.args.testf, self.count,
-                                              self.word2idx, maxseq, maxsent)
-        vocab = self.word2idx.keys()
-        self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
-
-        '''
-        S, C, Q, Y = [], [], [], []
-
-        for i, line in enumerate(lines):
-            word_indices = [word2idx[w] for w in nltk.word_tokenize(line['text'])]
-            word_indices += [0] * (maxsent - len(word_indices))
-            S.append(word_indices)
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
-                C.append(indices)
-                Q.append(offset+i+1)
-                Y.append(line['answer'])
-        print 'C=', C
-        print 'Q=', Q
-        print 'Y=', Y
-        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
-
-        self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word2idx, maxsent, offset=0)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word2idx, maxsent, offset=len(S_train))
-        S = np.concatenate([np.zeros((1, maxsent), dtype=np.int32), S_train, S_test], axis=0)
-
-        '''
-        return maxseq, maxsent
+        data, maxseq, maxsent = read_data_qa(fdata, self.count,
+                                             self.word2idx, maxseq, maxsent)
+        processed = process_dataset(data, self.word2idx, maxsent)
+        return maxseq, maxsent, processed
 
     def build_network(self, nonlinearity):
         batch_size = self.batch_size
@@ -589,15 +562,7 @@ class Model:
                 Q.append(offset+i+1)
                 Y.append(line['answer'])
         idx2word = dict(zip(word2idx.values(), word2idx.keys()))
-        # for s in S:
-        #    print(s)
-        #    print(idx2word)
-        #    print([idx2word[w] for w in s if w != 0])
-        # print(word2idx)
 
-        print 'C=', C
-        print 'Q=', Q
-        print 'Y=', Y
         return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
 
     def process_dataset(self, lines, word2idx, maxsent, offset):
@@ -669,6 +634,13 @@ class Pred:
         prev_weights = self.ml.read_model(fmodel)
         lasagne.layers.helper.set_all_param_values(network, prev_weights)
 
+def to_words(idx2word, S, indices):
+    sents = []
+    for idx in indices:
+        words = ' '.join([idx2word[idx2] for idx2 in S[idx]])
+        sents.append(words)
+    return ' '.join(sents)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -703,11 +675,14 @@ def main():
     maxsent = 0
     pdata, maxseq, maxsent = read_data_qa('tmp.txt', count, word2idx,
                                           maxseq, maxsent)
-    # print(pdata)
     vocab = word2idx.keys()
     idx2word = dict(zip(word2idx.values(), word2idx.keys()))
-    process_dataset(pdata, word2idx, maxsent)
-
+    data = process_dataset(pdata, word2idx, maxsent)
+    for i in range(0, len(data['Y'])):
+        print(data['C'][i])
+        print to_words(idx2word, data['S'], data['C'][i])
+        print to_words(idx2word, data['S'], [data['Q'][i]])
+        print data['Y'][i]
     lines = pred.get_lines('tmp.txt')
     vocab, word2idx, idx2word, maxseq, \
     maxsent = model.get_vocab(lines)

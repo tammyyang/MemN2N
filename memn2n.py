@@ -569,6 +569,7 @@ class Model:
         d = self.args.emb_size  # page 4, 5
         return (1-(j+1)/J) - ((np.arange(d)+1)/d)*(1-2*(j+1)/J)
 
+
 class Pred:
     def __init__(self):
         self.ml = ml.MLTools()

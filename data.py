@@ -5,12 +5,14 @@ from copy import deepcopy
 from collections import Counter
 from collections import OrderedDict
 
+
 def print_words(idx2word, S, indices):
     sents = []
     for idx in indices:
         words = ' '.join([idx2word[idx2] for idx2 in S[idx]])
         sents.append(words)
     return ' '.join(sents)
+
 
 def get_statement(line):
     line = line.replace('\n', '')
@@ -23,6 +25,7 @@ def get_statement(line):
         return segs[0][bk+1:], [ans[-1], ans[-2]], lid
     except IndexError:
         return segs[0][bk+1:], None, lid
+
 
 def process_dataset(data, word2idx, maxsent, offset=0):
     S, Y, C, Q = [], [], [], []
@@ -39,6 +42,7 @@ def process_dataset(data, word2idx, maxsent, offset=0):
     return {'S': S,
             'Y': np.array(Y), 'C': np.array(C),
             'Q': np.array(Q, dtype=np.int32)}
+
 
 def read_data_qa(fname, count, word2idx,
                  max_seqlen, max_sentlen):
@@ -82,7 +86,7 @@ def read_data_qa(fname, count, word2idx,
     count.extend(Counter(words).most_common())
 
     for word, _ in count:
-        if not word2idx.has_key(word):
+        if word not in word2idx:
             word2idx[word] = len(word2idx)
 
     data[-1] = all_stats

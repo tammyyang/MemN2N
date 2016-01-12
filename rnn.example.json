@@ -1,0 +1,57 @@
+{
+    "trainf": {
+               "des": "Input training file",
+               "type": "str",
+               "default": "data/en/qa1_single-supporting-fact_train.txt"
+              },
+    "trainf": {
+               "des": "Input validation file",
+               "type": "str",
+               "default": "data/en/qa1_single-supporting-fact_test.txt"
+              },
+    "batch_size": {
+                   "des": "Batch size",
+                   "type": "int",
+                   "default": 32
+                  },
+    "emb_size": {
+                 "des": "Embedding size",
+                 "type": "int",
+                 "default": 20
+                },
+    "max_norm": {
+                 "des": "Max norm",
+                 "type": "float",
+                 "default": 40.0
+                },
+    "lr": {
+           "des": "Initial learning rate",
+           "type": "float",
+           "default": 0.01
+          },
+    "nhops": {
+              "des": "Number of hops",
+              "type": "int",
+              "default": 3
+             },
+    "adj_w_tying": {
+                    "des": "Whether to use adjacent weight tying",
+                    "type": "bool",
+                    "default": true
+                   },
+    "linear_start": {
+                     "des": "Whether to start with linear activations",
+                     "type": "bool",
+                     "default": false
+                    },
+    "shuffle_batch": {
+                      "des": "Whether to shuffle minibatches",
+                      "type": "bool",
+                      "default": true
+                     },
+    "nepochs":{
+               "des": "Number of epochs",
+               "type": "int",
+               "default": 100
+              }
+}

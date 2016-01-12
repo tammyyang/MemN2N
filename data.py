@@ -5,6 +5,13 @@ from copy import deepcopy
 from collections import Counter
 from collections import OrderedDict
 
+def print_words(idx2word, S, indices):
+    sents = []
+    for idx in indices:
+        words = ' '.join([idx2word[idx2] for idx2 in S[idx]])
+        sents.append(words)
+    return ' '.join(sents)
+
 def get_statement(line):
     line = line.replace('\n', '')
     bk = line.find(' ')

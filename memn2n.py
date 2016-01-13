@@ -219,15 +219,15 @@ class Model:
         self.S = np.array(self.S, dtype=np.int32)
 
         self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
-        vocab = self.word2idx.keys()
+        self.vocab = self.word2idx.keys()
 
         print('[N2N] batch_size: %i' % self.args.batch_size)
         print('[N2N] maxseq: %i' % maxseq)
         print('[N2N] maxsent: %i' % maxsent)
         print('[N2N] sentences:')
         print(self.S.shape)
-        print('[N2N] vocab: %i' % len(vocab))
-        print(vocab)
+        print('[N2N] vocab: %i' % len(self.vocab))
+        print(self.vocab)
         for d in ['train', 'valid']:
             print d,
             for k in ['C', 'Q', 'Y']:
@@ -235,13 +235,12 @@ class Model:
             print ''
 
         lb = LabelBinarizer()
-        lb.fit(list(vocab))
-        vocab = lb.classes_.tolist()
+        lb.fit(list(self.vocab))
+        self.vocab = lb.classes_.tolist()
 
         self.maxseq = maxseq
         self.maxsent = maxsent
-        self.num_classes = len(vocab) + 1
-        self.vocab = vocab
+        self.num_classes = len(self.vocab) + 1
         self.lb = lb
         if not self.args.linear_start:
             self.nonlinearity = lasagne.nonlinearities.softmax
@@ -383,7 +382,6 @@ class Model:
 
         params = lasagne.layers.helper.get_all_params(
                         l_pred, trainable=True)
-        print 'params:', params
         grads = T.grad(cost, params)
         scaled_grads = lasagne.updates.total_norm_constraint(
                         grads, self.args.max_norm)
@@ -430,6 +428,7 @@ class Model:
         _y_pred = [self.predict(dataset, i) for i in xrange(n_batches)]
         y_pred = np.concatenate(_y_pred).astype(np.int32) - 1
         y_true = [self.vocab.index(y) for y in dataset['Y'][:len(y_pred)]]
+        print([self.vocab[i] for i in y_pred if i not in y_true])
         print metrics.confusion_matrix(y_true, y_pred)
         print metrics.classification_report(y_true, y_pred)
         errors = []
@@ -474,9 +473,6 @@ class Model:
             train_f1, train_errors = self.compute_f1(self.data['train'])
             print('[N2N] TRAIN_ERROR: %.2f' % ((1-train_f1)*100))
             for i, pred in train_errors[:10]:
-                logging.basicConfig(level=logging.DEBUG,
-                                    format='[N2N %(levelname)s] %(message)s')
-
                 logging.debug('Context:')
                 logging.debug(' %s' % print_words(self.idx2word,
                                                   self.S,

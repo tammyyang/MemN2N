@@ -428,9 +428,9 @@ class Model:
         _y_pred = [self.predict(dataset, i) for i in xrange(n_batches)]
         y_pred = np.concatenate(_y_pred).astype(np.int32) - 1
         y_true = [self.vocab.index(y) for y in dataset['Y'][:len(y_pred)]]
-        print([self.vocab[i] for i in y_pred if i not in y_true])
-        print metrics.confusion_matrix(y_true, y_pred)
-        print metrics.classification_report(y_true, y_pred)
+        logging.debug([self.vocab[i] for i in y_pred if i not in y_true])
+        logging.debug(metrics.confusion_matrix(y_true, y_pred))
+        logging.debug(metrics.classification_report(y_true, y_pred))
         errors = []
         for i, (t, p) in enumerate(zip(y_true, y_pred)):
             if t != p:
@@ -464,14 +464,14 @@ class Model:
                 total_cost += self.train_model()
                 self.reset_zero()
             end_time = time.time()
-            print('[N2N] %s' % ('-'*60))
+            print('[N2N] %s' % ('='*40))
             print('[N2N] epoch: %i' % epoch)
-            print('[N2N]  cost: %.2f' % (total_cost / len(indices)))
-            print('[N2N]  took: %d(s)' % (end_time - start_time))
+            print('[N2N]   cost: %.2f' % (total_cost / len(indices)))
+            print('[N2N]   took: %d(s)' % (end_time - start_time))
 
-            print('[N2N] === TRAIN %s' % ('='*40))
+            print('[N2N] --- TRAIN ---')
             train_f1, train_errors = self.compute_f1(self.data['train'])
-            print('[N2N] TRAIN_ERROR: %.2f' % ((1-train_f1)*100))
+            print('[N2N]   error: %.2f' % ((1-train_f1)*100))
             for i, pred in train_errors[:10]:
                 logging.debug('Context:')
                 logging.debug(' %s' % print_words(self.idx2word,
@@ -501,9 +501,9 @@ class Model:
                 lasagne.layers.helper.set_all_param_values(self.network,
                                                            prev_weights)
             else:
-                print('[N2N] === TEST %s' % ('='*40))
+                print('[N2N] --- TEST ---')
                 valid_f1, valid_errors = self.compute_f1(self.data['valid'])
-                print('[N2N] TEST_ERROR: %.2f' % ((1-valid_f1)*100))
+                print('[N2N]   error: %.2f' % ((1-valid_f1)*100))
 
             prev_train_f1 = train_f1
         mparms = lasagne.layers.helper.get_all_param_values(self.network)

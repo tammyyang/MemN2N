@@ -17,12 +17,13 @@ def print_words(idx2word, S, indices):
 def get_statement(line):
     line = line.replace('\n', '')
     bk = line.find(' ')
-    lid = int(line[:bk+1]) - 1
+    lid = int(line[:bk+1])
     segs = line.split('?')
+    segs[0] = segs[0].replace('.', '')
     try:
         ans = segs[1].split('\t')
-        ans = [s.replace(' ', '') for s in ans]
-        return segs[0][bk+1:], [ans[-1], ans[-2]], lid
+        ans = [s.replace(' ', '') for s in ans[:-1]] + ans[-1:]
+        return segs[0][bk+1:], [ans[-2], ans[-1]], lid
     except IndexError:
         return segs[0][bk+1:], None, lid
 
@@ -38,7 +39,7 @@ def process_dataset(data, word2idx, maxsent, offset=0):
             continue
         C.append([idx + offset for idx in data[i][3]])
         Q.append(i + offset)
-        Y.append(data[i][1][1])
+        Y.append(data[i][1][0])
     return {'S': S,
             'Y': np.array(Y), 'C': np.array(C),
             'Q': np.array(Q, dtype=np.int32)}
@@ -65,7 +66,7 @@ def read_data_qa(fname, count, word2idx,
         _stats = nltk.word_tokenize(stat)
         max_sentlen = max(len(_stats), max_sentlen)
         words.extend(_stats)
-        if lid == 0:
+        if lid == 1:
             max_seqlen = max(counter, max_seqlen)
             counter = 0
             start_idx = i

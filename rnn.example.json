@@ -4,7 +4,7 @@
                "type": "str",
                "default": "data/en/qa1_single-supporting-fact_train.txt"
               },
-    "trainf": {
+    "validf": {
                "des": "Input validation file",
                "type": "str",
                "default": "data/en/qa1_single-supporting-fact_test.txt"

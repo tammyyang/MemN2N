@@ -218,6 +218,7 @@ class Model:
         self.data['valid']['Y'] = pvalid['Y']
         self.S = np.array(self.S, dtype=np.int32)
 
+        maxseq = min(50, maxseq)
         self.idx2word = dict(zip(self.word2idx.values(), self.word2idx.keys()))
         self.vocab = self.word2idx.keys()
 
@@ -253,7 +254,7 @@ class Model:
                                              self.word2idx,
                                              maxseq, maxsent)
         processed = process_dataset(data, self.word2idx, maxsent,
-                                    offset=len(self.S))
+                                    offset=len(self.S), cut=50)
         self.S.extend(processed['S'])
         return maxseq, maxsent, processed
 

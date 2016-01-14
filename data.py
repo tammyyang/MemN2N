@@ -28,7 +28,7 @@ def get_statement(line):
         return segs[0][bk+1:], None, lid
 
 
-def process_dataset(data, word2idx, maxsent, offset=0):
+def process_dataset(data, word2idx, maxsent, offset=0, cut=-1):
     S, Y, C, Q = [], [], [], []
     for stat in data[-1]:
         indices = map(lambda x: word2idx[x], stat)
@@ -37,7 +37,7 @@ def process_dataset(data, word2idx, maxsent, offset=0):
     for i in data.keys():
         if i < 0:
             continue
-        C.append([idx + offset for idx in data[i][3]])
+        C.append([idx + offset for idx in data[i][3]][:cut])
         Q.append(i + offset)
         Y.append(data[i][1][0])
     return {'S': S,
@@ -77,8 +77,8 @@ def read_data_qa(fname, count, word2idx,
             stats_idx.append(i)
         else:
             data[i] = [deepcopy(stat), ans,
-                       list(reversed(all_stats[start_idx:i])),
-                       list(reversed(stats_idx))]
+                       all_stats[start_idx:i][::-1],
+                       stats_idx[::-1]]
 
     if len(count) == 0:
         count.append(['<eos>', 0])
